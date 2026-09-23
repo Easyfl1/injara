@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: injara
+          POSTGRES_PASSWORD: injara
+          POSTGRES_DB: injara
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check SDK denylist
+        run: pnpm tsx scripts/check-sdk-denylist.ts
+
+      - run: pnpm prisma generate
+
+      - run: pnpm typecheck
+
+      - run: pnpm lint
+
+      - run: pnpm test
+
+      - name: Test
+        env:
+          DATABASE_URL: postgresql://injara:injara@localhost:5432/injara
+          REDIS_URL: redis://localhost:6379
+          TELEGRAM_BOT_TOKEN: test
+          FLW_SECRET_HASH: test
+          TREASURY_INJ_ADDRESS: inj1test
+          PII_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+          PII_BLIND_INDEX_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+        run: pnpm test

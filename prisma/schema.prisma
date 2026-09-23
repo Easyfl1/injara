@@ -1,0 +1,361 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderType {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  QUOTED
+  AWAITING_PAYMENT
+  PAYMENT_RECEIVED
+  PAYMENT_CONFIRMED
+  TREASURY_SENDING
+  AWAITING_DEPOSIT
+  DEPOSIT_DETECTED
+  DEPOSIT_CONFIRMED
+  PAYOUT_PENDING
+  PAYOUT_PROCESSING
+  COMPLETED
+  EXPIRED
+  CANCELLED
+  PAYMENT_FAILED
+  SEND_FAILED
+  DEPOSIT_MISMATCH
+  PAYOUT_FAILED
+  MANUAL_REVIEW
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+}
+
+enum LedgerAccount {
+  TREASURY_INJ
+  TREASURY_INJ_RESERVED
+  TREASURY_NGN_FLW
+  TREASURY_NGN_RESERVED
+  FEES_NGN
+  FEES_INJ
+  GAS_EXPENSE_INJ
+  SUSPENSE_UNMATCHED_INJ
+  USER_CLEARING_NGN
+  USER_CLEARING_INJ
+  EXTERNAL_USER_INJ
+  EXTERNAL_USER_NGN
+}
+
+enum Asset {
+  INJ
+  NGN
+}
+
+enum LedgerDirection {
+  debit
+  credit
+}
+
+model User {
+  id            String    @id @default(cuid())
+  telegramId    String    @unique @map("telegram_id")
+  username      String?
+  firstName     String?   @map("first_name")
+  lastName      String?   @map("last_name")
+  injAddress    String?   @map("inj_address")
+  walletId      String?   @unique @map("wallet_id")
+  walletIndex   Int?      @unique @map("wallet_index")
+  email         String?
+  isBanned      Boolean   @default(false) @map("is_banned")
+  riskScore     Int       @default(0) @map("risk_score")
+  kycStatus     String    @default("none") @map("kyc_status")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  orders        Order[]
+  bankAccounts  BankAccount[]
+  riskFlags     RiskFlag[]
+  auditLogs     AuditLog[]
+  supportTickets SupportTicket[]
+  @@index([injAddress])
+  @@map("users")
+}
+
+model Order {
+  id                   String      @id @default(cuid())
+  publicId             String      @unique @map("public_id")
+  orderType            OrderType   @map("order_type")
+  userId               String      @map("user_id")
+  status               OrderStatus
+  injAmountBase        String      @map("inj_amount_base")
+  ngnAmountKobo        BigInt      @map("ngn_amount_kobo")
+  feeKobo              BigInt      @map("fee_kobo")
+  injAddress           String      @map("inj_address")
+
+  paymentReference     String?     @unique @map("payment_reference")
+  paymentLink          String?     @map("payment_link")
+  flwTransactionId     String?     @map("flw_transaction_id")
+  refundReference      String?     @map("refund_reference")
+  txHash               String?     @map("tx_hash")
+  broadcastTxHash      String?     @map("broadcast_tx_hash")
+  depositMemo          String?     @unique @map("deposit_memo")
+  depositInjBase       String      @default("0") @map("deposit_inj_base")
+
+  bankAccountId        String?     @map("bank_account_id")
+  failureReason        String?     @map("failure_reason")
+  sendAttempts         Int         @default(0) @map("send_attempts")
+  payoutAttempts       Int         @default(0) @map("payout_attempts")
+
+  quoteExpiresAt       DateTime    @map("quote_expires_at")
+  paymentWindowEndsAt  DateTime?   @map("payment_window_ends_at")
+  paymentWindowExtensions Int      @default(0) @map("payment_window_extensions")
+  depositWindowEndsAt  DateTime?   @map("deposit_window_ends_at")
+
+  quotedAt             DateTime    @default(now()) @map("quoted_at")
+  awaitingPaymentAt    DateTime?   @map("awaiting_payment_at")
+  paymentReceivedAt    DateTime?   @map("payment_received_at")
+  paymentConfirmedAt   DateTime?   @map("payment_confirmed_at")
+  treasurySendingAt    DateTime?   @map("treasury_sending_at")
+  awaitingDepositAt    DateTime?   @map("awaiting_deposit_at")
+  depositDetectedAt    DateTime?   @map("deposit_detected_at")
+  payoutPendingAt      DateTime?   @map("payout_pending_at")
+  completedAt          DateTime?   @map("completed_at")
+  cancelledAt          DateTime?   @map("cancelled_at")
+
+  createdAt            DateTime    @default(now()) @map("created_at")
+  updatedAt            DateTime    @updatedAt @map("updated_at")
+
+  user                 User        @relation(fields: [userId], references: [id])
+  bankAccount          BankAccount? @relation(fields: [bankAccountId], references: [id])
+  quoteSnapshot        QuoteSnapshot?
+  payouts              Payout[]
+  ledgerEntries        LedgerEntry[]
+  webhookEvents        WebhookEvent[]
+  chargebacks          ChargebackEvent[]
+
+  @@index([userId, createdAt])
+  @@index([status, quoteExpiresAt])
+  @@index([status, paymentWindowEndsAt])
+  @@index([status, depositWindowEndsAt])
+  @@map("orders")
+}
+
+model QuoteSnapshot {
+  id                    String   @id @default(cuid())
+  orderId               String   @unique @map("order_id")
+  source                String
+  injNgn                String   @map("inj_ngn")
+  injUsd                String   @map("inj_usd")
+  priceUpdatedAt        DateTime @map("price_updated_at")
+  feeBps                Int      @map("fee_bps")
+  injAmountBase         String   @map("inj_amount_base")
+  grossKobo             BigInt   @map("gross_kobo")
+  feeKobo               BigInt   @map("fee_kobo")
+  flwPayoutFeeKobo      BigInt   @default(0) @map("flw_payout_fee_kobo")
+  payableOrPayoutKobo   BigInt   @map("payable_or_payout_kobo")
+  rawPayload            Json     @map("raw_payload")
+  createdAt             DateTime @default(now()) @map("created_at")
+  order                 Order    @relation(fields: [orderId], references: [id])
+  @@map("quote_snapshots")
+}
+
+model TreasuryState {
+  id                  Int      @id @default(1)
+  walletAddress       String   @map("wallet_address")
+  onchainInjBase      String   @map("onchain_inj_base")
+  reservedInjBase     String   @map("reserved_inj_base")
+  gasBufferInjBase    String   @map("gas_buffer_inj_base")
+  flwAvailableNgnKobo BigInt   @default(0) @map("flw_available_ngn_kobo")
+  reservedNgnKobo     BigInt   @default(0) @map("reserved_ngn_kobo")
+  lastSyncedAt        DateTime @map("last_synced_at")
+  lastUpdated         DateTime @updatedAt @map("last_updated")
+  @@map("treasury")
+}
+
+model Payout {
+  id                   String       @id @default(cuid())
+  orderId              String       @unique @map("order_id")
+  flutterwaveReference String       @unique @map("flutterwave_reference")
+  flutterwaveId        String?      @map("flutterwave_id")
+  status               PayoutStatus
+  amountKobo           BigInt       @map("amount_kobo")
+  accountBank          String       @map("account_bank")
+  accountNumberCipher  Bytes        @map("account_number_cipher")
+  accountNumberIv      Bytes        @map("account_number_iv")
+  accountNumberTag     Bytes        @map("account_number_tag")
+  accountNameCipher    Bytes        @map("account_name_cipher")
+  resolvedName         String       @map("resolved_name")
+  keyVersion           Int          @default(1) @map("key_version")
+  completeMessage      String?      @map("complete_message")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+  order                Order        @relation(fields: [orderId], references: [id])
+  @@map("payouts")
+}
+
+model BankAccount {
+  id                  String   @id @default(cuid())
+  userId              String   @map("user_id")
+  bankCode            String   @map("bank_code")
+  bankName            String   @map("bank_name")
+  accountNumberCipher Bytes    @map("account_number_cipher")
+  accountNumberIv     Bytes    @map("account_number_iv")
+  accountNumberTag    Bytes    @map("account_number_tag")
+  accountNumberBlind  String   @map("account_number_blind")
+  accountNameCipher   Bytes    @map("account_name_cipher")
+  resolvedName        String   @map("resolved_name")
+  keyVersion          Int      @default(1) @map("key_version")
+  createdAt           DateTime @default(now()) @map("created_at")
+  user                User     @relation(fields: [userId], references: [id])
+  orders              Order[]
+  @@index([userId])
+  @@index([accountNumberBlind])
+  @@map("bank_accounts")
+}
+
+model LedgerEntry {
+  id             String          @id @default(cuid())
+  bookTxId       String          @map("book_tx_id")
+  orderId        String?         @map("order_id")
+  account        LedgerAccount
+  asset          Asset
+  amountBase     String          @map("amount_base")
+  direction      LedgerDirection
+  idempotencyKey String          @unique @map("idempotency_key")
+  memo           String?
+  createdAt      DateTime        @default(now()) @map("created_at")
+  order          Order?          @relation(fields: [orderId], references: [id])
+  @@index([bookTxId])
+  @@index([orderId])
+  @@index([account, createdAt])
+  @@map("ledger_entries")
+}
+
+model WebhookEvent {
+  id             String    @id @default(cuid())
+  provider       String
+  event          String
+  fingerprint    String    @unique
+  flwId          String?   @map("flw_id")
+  txRef          String?   @map("tx_ref")
+  status         String?
+  payload        Json
+  signatureValid Boolean   @map("signature_valid")
+  processedAt    DateTime? @map("processed_at")
+  processError   String?   @map("process_error")
+  orderId        String?   @map("order_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  order          Order?    @relation(fields: [orderId], references: [id])
+  @@index([txRef])
+  @@index([processedAt])
+  @@map("webhook_events")
+}
+
+model ChargebackEvent {
+  id        String   @id @default(cuid())
+  flwId     String   @unique @map("flw_id")
+  orderId   String?  @map("order_id")
+  txRef     String?  @map("tx_ref")
+  status    String
+  amountKobo BigInt? @map("amount_kobo")
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  order     Order?   @relation(fields: [orderId], references: [id])
+  @@map("chargeback_events")
+}
+
+model UnmatchedDeposit {
+  id            String   @id @default(cuid())
+  txHash        String   @unique @map("tx_hash")
+  fromAddress   String   @map("from_address")
+  injAmountBase String   @map("inj_amount_base")
+  memo          String?
+  height        BigInt
+  matchedOrderId String? @map("matched_order_id")
+  raw           Json
+  createdAt     DateTime @default(now()) @map("created_at")
+  @@map("unmatched_deposits")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?  @map("actor_user_id")
+  actorType   String
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  before      Json?
+  after       Json?
+  ip          String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model RiskFlag {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  type      String
+  detail    String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id])
+  @@index([userId, active])
+  @@map("risk_flags")
+}
+
+model OutboxJob {
+  id              String    @id @default(cuid())
+  kind            String
+  payload         Json
+  runAfter        DateTime  @default(now()) @map("run_after")
+  attempts        Int       @default(0)
+  lockedAt        DateTime? @map("locked_at")
+  lockedBy        String?   @map("locked_by")
+  processedAt     DateTime? @map("processed_at")
+  lastError       String?   @map("last_error")
+  webhookEventId  String?   @map("webhook_event_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  @@index([processedAt, runAfter])
+  @@map("outbox_jobs")
+}
+
+model ProcessedChainTx {
+  txHash    String   @id @map("tx_hash")
+  height    BigInt
+  kind      String
+  orderId   String?  @map("order_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([orderId])
+  @@map("processed_chain_txs")
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  message   String
+  orderId   String?  @map("order_id")
+  status    String   @default("open")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id])
+  @@map("support_tickets")
+}
+
+model ChainCursor {
+  id         String   @id
+  lastHeight BigInt   @map("last_height")
+  lastTxHash String?  @map("last_tx_hash")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  @@map("chain_cursors")
+}
